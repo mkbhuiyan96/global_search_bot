@@ -1,10 +1,14 @@
-import time
 import re
-import requests
-from requests.exceptions import RequestException
+import httpx
+import asyncio
+import sqlite3
 from bs4 import BeautifulSoup
 
-def create_session():
+sem = asyncio.Semaphore(5)
+
+
+async def create_client():
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'}
     payload = {
         'selectedInstName': 'Queens College | ',
         'inst_selection': 'QNS01',
@@ -12,23 +16,23 @@ def create_session():
         'term_value': '1239',
         'next_btn': 'Next'
     }
+    client = httpx.AsyncClient(headers=headers)
     while True:
-        try:
-            session = requests.session()
-            session.post('https://globalsearch.cuny.edu/CFGlobalSearchTool/CFSearchToolController', data=payload, timeout=10)
-            return session
-        except (RequestException, requests.Timeout):
-            print("Error occurred while starting a session, trying again in 5 minutes.")
-            time.sleep(300)
+        try: 
+            response = await client.post('https://globalsearch.cuny.edu/CFGlobalSearchTool/CFSearchToolController', data=payload)
+            response.raise_for_status()
+            return client
+        except Exception as e:
+            print(f'Error occurred while starting a session: {e}\nTrying again in 5 minutes.')
+            await asyncio.sleep(300)
 
-def main():
-    class_url = input('Enter the URL of the class page from CUNY Global Search: ')
-    session = create_session()
 
-    while True:
+async def track_courses(client, url):
+    async with sem:
         try:
-            response = session.get(class_url, timeout=10)
-            soup = BeautifulSoup(response.content, 'html.parser')
+            response = await client.get(url)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, 'html.parser')
             full_class_name = soup.find('span', {'id': 'DERIVED_CLSRCH_DESCR200'}).text.strip()
             
             match = re.search(r'([A-Z]+\s\d+)', full_class_name)
@@ -38,9 +42,20 @@ def main():
                 class_name = full_class_name
             status = soup.find('span', {'id': 'SSR_CLS_DTL_WRK_SSR_DESCRSHORT'}).text
             print(f'{class_name}: {status}')
-            time.sleep(3)
-        except (RequestException, requests.Timeout):
-            session = create_session()
+        except Exception as e:
+            print(f'An error occured: {e}\nWhile trying to get information about\n{url}\n')
+
+
+async def main():
+    client = await create_client()
+    urls = ['https://globalsearch.cuny.edu/CFGlobalSearchTool/CFSearchToolController?class_number_searched=MjQyMDQ=&session_searched=MQ==&term_searched=MTIzOQ==&inst_searched=UXVlZW5zIENvbGxlZ2U=',
+           'https://globalsearch.cuny.edu/CFGlobalSearchTool/CFSearchToolController?class_number_searched=MjU1MzI=&session_searched=MQ==&term_searched=MTIzOQ==&inst_searched=UXVlZW5zIENvbGxlZ2U=',
+           'https://globalsearch.cuny.edu/CFGlobalSearchTool/CFSearchToolController?class_number_searched=MjM3MDQ=&session_searched=MQ==&term_searched=MTIzOQ==&inst_searched=UXVlZW5zIENvbGxlZ2U=']
     
-if __name__ == '__main__':
-    main()
+    while True:
+        tasks = []
+        for url in urls:
+            tasks.append(asyncio.ensure_future(track_courses(client, url)))
+        await asyncio.gather(*tasks)
+
+asyncio.run(main())
