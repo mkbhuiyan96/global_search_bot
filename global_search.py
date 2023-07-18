@@ -1,7 +1,7 @@
 import re
-import httpx
 import asyncio
 import aiosqlite
+import httpx
 from bs4 import BeautifulSoup
 
 
@@ -27,7 +27,7 @@ class CourseTracker:
                 response.raise_for_status()
                 soup = BeautifulSoup(response.text, 'html.parser')
                 
-                full_class_name = soup.find('span', {'id': 'DERIVED_CLSRCH_DESCR200'}).text.strip()
+                full_class_name = soup.find('span', {'id': 'DERIVED_CLSRCH_DESCR200'}).text
                 class_number = soup.find('span', {'id': 'SSR_CLS_DTL_WRK_SSR_DATE_LONG'}).text
                 status = soup.find('span', {'id': 'SSR_CLS_DTL_WRK_SSR_DESCRSHORT'}).text
                 if not full_class_name or not class_number or not status:
@@ -52,30 +52,30 @@ class CourseTracker:
             'term_value': '1239',
             'next_btn': 'Next'
         }
+        headers = {'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
+        }
         while True:
             try:
-                client = httpx.AsyncClient(
-                    headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'}
-                )
-                response = await client.post('https://globalsearch.cuny.edu/CFGlobalSearchTool/CFSearchToolController', data=payload)
-                response.raise_for_status()
-                
-                urls = await self.get_urls_from_db()
-                tasks = [self.track_course(client, url) for url in urls]
-                await asyncio.gather(*tasks)
-                self.wait_time = 15
+                async with httpx.AsyncClient(headers=headers) as client:
+                    response = await client.post('https://globalsearch.cuny.edu/CFGlobalSearchTool/CFSearchToolController', data=payload)
+                    response.raise_for_status()
+                    
+                    urls = await self.get_urls_from_db()
+                    tasks = [self.track_course(client, url) for url in urls]
+                    await asyncio.gather(*tasks)
+                    self.wait_time = 15
+                    await asyncio.sleep(2)
             except Exception as e:
                 print(f'An error occurred: {e}\nWhile trying to create the client. Trying again in {self.wait_time} seconds.')
                 await asyncio.sleep(self.wait_time)
                 self.wait_time = min(self.wait_time * 2, 300)
-            finally:
-                await client.aclose()
-                await asyncio.sleep(2)
 
 
 async def main():
     tracker = CourseTracker()
     await tracker.start_tracking()
 
-if __name__ == "__main__":
+
+if __name__ == '__main__':
     asyncio.run(main())

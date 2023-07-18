@@ -15,6 +15,7 @@ async def create_tables(conn):
     await cursor.execute("""
         CREATE TABLE IF NOT EXISTS courses (
             class_id TEXT PRIMARY KEY,
+            status TEXT,
             year_term TEXT,
             url TEXT,
             FOREIGN KEY(year_term) REFERENCES term_info(year_term)
@@ -36,7 +37,6 @@ async def create_tables(conn):
             FOREIGN KEY(class_id) REFERENCES courses(class_id)
         )
     """)
-    
     await conn.commit()
 
 
