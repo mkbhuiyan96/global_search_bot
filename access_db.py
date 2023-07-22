@@ -1,9 +1,6 @@
-import aiosqlite
-import asyncio
-import logging
-import logging_utility
+import logger_utility
 
-logging_utility.setup_logger('access_db.log')
+logger = logger_utility.setup_logger(__name__, 'access_db.log')
 
 
 async def create_term_info(conn):
@@ -18,7 +15,7 @@ async def create_term_info(conn):
             """)
         await conn.commit()
     except Exception as e:
-        logging.error(f"Error occurred: {e}")
+        logger.error(f"Error occurred: {e}")
 
 
 async def update_term_info(conn, term_id, hidden_value):
@@ -31,7 +28,7 @@ async def update_term_info(conn, term_id, hidden_value):
             """, (hidden_value, term_id))
             await conn.commit()
     except Exception as e:
-        logging.error(f"Error occurred: {e}")
+        logger.error(f"Error occurred: {e}")
 
 
 async def get_term_info(conn, year_term):
@@ -41,7 +38,7 @@ async def get_term_info(conn, year_term):
             term_info = await cur.fetchone()
             return term_info
     except Exception as e:
-        logging.error(f"Error occurred: {e}")
+        logger.error(f"Error occurred: {e}")
         return None
 
 
@@ -51,7 +48,7 @@ async def fetch_all_terms(conn):
             await cur.execute('SELECT * FROM term_info')
             return await cur.fetchall()
     except Exception as e:
-        logging.error(f"Error occurred: {e}")
+        logger.error(f"Error occurred: {e}")
         return []
 
 
@@ -61,7 +58,7 @@ async def add_course(conn, course_tuple):
             await cur.execute('INSERT OR IGNORE INTO courses VALUES (?, ?, ?)', course_tuple)
             await conn.commit()
     except Exception as e:
-        logging.error(f"Error occurred: {e}")
+        logger.error(f"Error occurred: {e}")
 
 
 async def remove_course(conn, class_id):
@@ -71,7 +68,7 @@ async def remove_course(conn, class_id):
             await cur.execute('DELETE FROM courses WHERE class_id = ?', (class_id,))
             await conn.commit()
     except Exception as e:
-        logging.error(f"Error occurred: {e}")
+        logger.error(f"Error occurred: {e}")
 
 
 async def get_course_row(conn, class_id):
@@ -81,7 +78,7 @@ async def get_course_row(conn, class_id):
             term_info = await cur.fetchone()
             return term_info
     except Exception as e:
-        logging.error(f"Error occurred: {e}")
+        logger.error(f"Error occurred: {e}")
         return None
 
 
@@ -91,7 +88,7 @@ async def fetch_all_courses(conn):
             await cur.execute('SELECT * FROM courses')
             return await cur.fetchall()
     except Exception as e:
-        logging.error(f"Error occurred: {e}")
+        logger.error(f"Error occurred: {e}")
         return []
 
 
@@ -107,7 +104,7 @@ async def get_course_with_term_values(conn, class_id):
             row = await cur.fetchone()
             return row
     except Exception as e:
-        logging.error(f"Error occurred: {e}")
+        logger.error(f"Error occurred: {e}")
         return None
 
 
@@ -122,7 +119,7 @@ async def get_course_name_and_status(conn, class_id):
             """, (class_id,))
             return await cur.fetchone()
     except Exception as e:
-        logging.error(f"Error occurred: {e}")
+        logger.error(f"Error occurred: {e}")
         return None
     
 
@@ -136,7 +133,7 @@ async def update_course_status(conn, class_id, status):
             """, (status, class_id))
             await conn.commit()
     except Exception as e:
-        logging.error(f"Error occurred: {e}")
+        logger.error(f"Error occurred: {e}")
 
 
 async def add_course_details(conn, course_details_tuple):
@@ -145,7 +142,7 @@ async def add_course_details(conn, course_details_tuple):
             await cur.execute('INSERT OR IGNORE INTO course_details VALUES (?, ?, ?, ?)', course_details_tuple)
             await conn.commit()
     except Exception as e:
-        logging.error(f"Error occurred: {e}")
+        logger.error(f"Error occurred: {e}")
 
 
 async def get_course_details(conn, class_id):
@@ -155,7 +152,7 @@ async def get_course_details(conn, class_id):
             details = await cur.fetchone()
             return details
     except Exception as e:
-        logging.error(f"Error occurred: {e}")
+        logger.error(f"Error occurred: {e}")
         return None
 
 
@@ -165,7 +162,7 @@ async def add_user_interest(conn, user_interests_tuple):
             await cur.execute('INSERT OR IGNORE INTO user_interests VALUES (?, ?, ?)', user_interests_tuple)
             await conn.commit()
     except Exception as e:
-        logging.error(f"Error occurred: {e}")
+        logger.error(f"Error occurred: {e}")
 
 
 async def remove_user_interest(conn, user_id, class_id):
@@ -189,7 +186,7 @@ async def remove_user_interest(conn, user_id, class_id):
                 await conn.commit()
                 return num_deleted_rows
     except Exception as e:
-        logging.error(f"Error occurred: {e}")
+        logger.error(f"Error occurred: {e}")
         return None
 
 
@@ -199,7 +196,7 @@ async def fetch_all_users_and_channels_for_course(conn, class_id):
             await cur.execute('SELECT user_id, channel_id FROM user_interests WHERE class_id = ?', (class_id,))
             return await cur.fetchall()
     except Exception as e:
-        logging.error(f"Error occurred: {e}")
+        logger.error(f"Error occurred: {e}")
         return []    
 
 
@@ -210,5 +207,5 @@ async def fetch_user_interests(conn, user_id):
             classes = await cur.fetchall()
             return [class_[0] for class_ in classes]
     except Exception as e:
-        logging.error(f"Error occurred: {e}")
+        logger.error(f"Error occurred: {e}")
         return []

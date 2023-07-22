@@ -1,9 +1,8 @@
 import aiosqlite
 import asyncio
-import logging
-import logging_utility
+import logger_utility
 
-logging_utility.setup_logger('create_db.log')
+logger = logger_utility.setup_logger(__name__, 'create_db.log')
 
 async def initialize_tables(conn):
     try:
@@ -39,16 +38,16 @@ async def initialize_tables(conn):
                 )
             """)
             await conn.commit()
-            logging.info("Tables initialized successfully.")
+            logger.info("Tables initialized successfully.")
     except Exception as e:
-        logging.error(f"Error occurred while initializing tables: {e}")
+        logger.error(f"Error occurred while initializing tables: {e}")
 
 async def main():
     try:
         async with aiosqlite.connect('classes.db') as conn:
             await initialize_tables(conn)
     except Exception as e:
-        logging.error(f"Error occurred while connecting to the database: {e}")
+        logger.error(f"Error occurred while connecting to the database: {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())

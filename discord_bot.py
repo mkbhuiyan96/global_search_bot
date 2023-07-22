@@ -2,18 +2,14 @@ import asyncio
 import aiosqlite
 import os
 import signal
-import logging
-import logging_utility
-from typing import Literal #, Optional
+import logger_utility
+from typing import Literal
 import discord
 from discord import app_commands
-#from discord.ext import tasks, commands
-import create_db
 import access_db
 import global_search
-#import schedule_builder
 
-logging_utility.setup_logger('discord_bot.log')
+logger = logger_utility.setup_logger(__name__, 'discord_bot.log')
 
 
 class MyClient(discord.Client):
@@ -35,21 +31,23 @@ client = MyClient(intents=discord.Intents.all())
 
 
 async def start_tracking(term):
+    await client.tracker.initialize_db()
     client.tracker.session = await client.tracker.create_session(term)
+    
     while True:
         if not client.tracker.session_active:
-            logging.info('Session is not active. Sleeping for 10 seconds.')
+            logger.info('Session is not active. Sleeping for 10 seconds.')
             await asyncio.sleep(10)
             continue
         try:
             async with aiosqlite.connect('classes.db') as conn:
                 all_courses = await access_db.fetch_all_courses(conn)
                 if not all_courses:
-                    logging.info('No courses are in the database. Sleeping for 30 seconds.')
+                    logger.info('No courses are in the database. Sleeping for 30 seconds.')
                     await asyncio.sleep(30)
                     continue
         except Exception as e:
-            logging.error(f'Database access error: {e}')
+            logger.error(f'Database access error: {e}')
             break
             
         params = [await client.tracker.encode_and_generate_params(class_number, year_term) for class_number, status, year_term in all_courses]
@@ -64,10 +62,10 @@ async def start_tracking(term):
                             await notify_users(class_name, class_id, status)
                         print(f'{class_name}-{class_id}: {status}')
                     else:
-                        logging.error('Error: No results.')
+                        logger.error('Error: No results.')
                 await asyncio.sleep(5)
         except Exception as e:
-            logging.error(f'An error occurred: {e}\nTrying to recreate session in {client.tracker.wait_time} seconds.')
+            logger.error(f'An error occurred: {e}\nTrying to recreate session in {client.tracker.wait_time} seconds.')
             client.tracker.session_active = False
             await client.tracker.session.aclose()
             client.tracker.session = await client.tracker.create_session()
@@ -75,10 +73,7 @@ async def start_tracking(term):
 
 @client.event
 async def on_ready():
-    logging.info(f'Logged in as {client.user} (ID: {client.user.id})')
-    async with aiosqlite.connect('classes.db') as conn:
-        await create_db.initialize_tables(conn)
-        await access_db.create_term_info(conn)
+    logger.info(f'Logged in as {client.user} (ID: {client.user.id})')
     await start_tracking('2023 Fall Term')
 
 
@@ -104,19 +99,7 @@ async def notify_users(class_name, course_number, status):
                 channel = client.get_channel(int(channel_id))
                 await channel.send(f'{user.mention}, {class_name}-{course_number} is now {status}!')
     except Exception as e:
-        logging.error(f'An error occured: {e}')
-        
-
-# @client.tree.command()
-# @app_commands.describe(action='The action to perform on Schedule Builder')
-# async def perform_action(
-#     interaction: discord.Interaction,
-#     action: Literal['Add', 'Drop', 'Swap'],
-#     prev: client.course_number_range,
-#     new: client.course_number_range
-# ):
-#     """Add/Drop a course on Schedule Builder"""
-#     await interaction.response.send_message(f'{action} {prev} {new}')
+        logger.error(f'An error occured: {e}')
 
 
 @client.tree.command()
@@ -134,7 +117,7 @@ async def get_course_details(interaction: discord.Interaction, course_number: cl
             else:
                 await interaction.response.send_message('That course is not in the database.', ephemeral=True)
     except Exception as e:
-        logging.error(f'An error occured: {e}')
+        logger.error(f'An error occured: {e}')
         await interaction.response.send_message(f'Error occurred: {e}', ephemeral=True)        
 
 
@@ -150,7 +133,7 @@ async def check_course_status(interaction: discord.Interaction, course_number: c
             raise ValueError('The course number did not match when checking the website.')
         await interaction.response.send_message(f'{class_name}-{class_id}: {status}')
     except Exception as e:
-        logging.error(f'An error occured: {e}')
+        logger.error(f'An error occured: {e}')
         await interaction.response.send_message(f'An error occurred: {e}', ephemeral=True)
 
 
@@ -163,7 +146,7 @@ async def add_course(interaction: discord.Interaction, course_number: client.cou
         try:
             database_value = await access_db.get_course_name_and_status(conn, str(course_number))
         except Exception as e:
-            logging.error(f'An error occured: {e}')
+            logger.error(f'An error occured: {e}')
             await interaction.response.send_message(f'An error occurred: {e}', ephemeral=True)
             return
         
@@ -174,7 +157,7 @@ async def add_course(interaction: discord.Interaction, course_number: client.cou
                 class_name, status, _, _ = result
                 await interaction.response.send_message(f'{class_name}-{course_number}: {status}')
             except Exception as e:
-                logging.error(f'An error occured: {e}')
+                logger.error(f'An error occured: {e}')
                 await interaction.response.send_message(f'An error occurred: {e}', ephemeral=True)
                 return
         else:
@@ -183,7 +166,7 @@ async def add_course(interaction: discord.Interaction, course_number: client.cou
                 class_name, status = database_value
                 await interaction.response.send_message(f'{class_name}-{course_number}: {status}')
             except Exception as e:
-                logging.error(f'An error occured: {e}')
+                logger.error(f'An error occured: {e}')
                 await interaction.response.send_message(f'An error occurred: {e}', ephemeral=True)
                 return
 
@@ -199,7 +182,7 @@ async def remove_course(interaction: discord.Interaction, course_number: client.
             class_name, _ = await access_db.get_course_name_and_status(conn, course_number)
             deleted_rows = await access_db.remove_user_interest(conn, interaction.user.id, str(course_number))
     except Exception as e:
-        logging.error(f'An error occured: {e}')
+        logger.error(f'An error occured: {e}')
         await interaction.response.send_message(f'An error occured: {e}', ephemeral=True)
         return
     if deleted_rows < 0:

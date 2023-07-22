@@ -1,7 +1,6 @@
 import time
 import os
-import logging
-import logging_utility
+import logger_utility
 import asyncio
 import aiosqlite
 import ssl
@@ -9,7 +8,7 @@ import httpx
 from bs4 import BeautifulSoup
 import access_db
 
-logging_utility.setup_logger('schedule_builder.log')
+logger = logger_utility.setup_logger(__name__, 'schedule_builder.log')
 context = ssl.create_default_context()
 context.load_verify_locations(cafile='DigiCertTLSRSASHA2562020CA1-1.crt.pem')
 
@@ -31,7 +30,7 @@ async def send_request(action, term, prev_class_id, new_class_id):
             await client.post('https://ssologin.cuny.edu/oam/server/auth_cred_submit', data=payload)
             return await perform_action(client, action, term, prev_class_id, new_class_id)
     except Exception as e:
-        logging.error(f'An error occurred: {e}')
+        logger.error(f'An error occurred: {e}')
         return None
 
 
@@ -56,7 +55,7 @@ async def perform_action(client, action, term, prev_class_id, new_class_id):
             if not term_info:
                 raise ValueError(f'No row found in term_info for term: {term}')
     except Exception as e:
-        logging.error(f'Database error occured: {e}')
+        logger.error(f'Database error occured: {e}')
         return None
     
     _, hidden_value, term_ID = term_info
@@ -89,8 +88,8 @@ async def perform_action(client, action, term, prev_class_id, new_class_id):
 
 
 async def main():
-    logging.info(await send_request('drop', '2023 Fall Term', '23427', '23427'))
-    logging.info(await send_request('add', '2023 Fall Term', '23427', '23427'))
+    logger.info(await send_request('drop', '2023 Fall Term', '23427', '23427'))
+    logger.info(await send_request('add', '2023 Fall Term', '23427', '23427'))
 
 
 if __name__ == '__main__':
