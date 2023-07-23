@@ -1,6 +1,7 @@
 import asyncio
 import aiosqlite
 import os
+from dotenv import load_dotenv
 import signal
 import logger_utility
 from typing import Literal
@@ -9,6 +10,7 @@ from discord import app_commands
 import access_db
 import global_search
 
+load_dotenv()
 logger = logger_utility.setup_logger(__name__, 'discord_bot.log')
 
 
@@ -17,14 +19,17 @@ class MyClient(discord.Client):
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self) 
         self.tracker = global_search.CourseTracker()
-        self.MY_GUILD = discord.Object(id=os.environ.get('GUILD_ID'))
         self.course_number_range = app_commands.Range[int, 1000, 99999]
         self.available_terms = Literal['2023 Fall Term']
 
-    async def setup_hook(self):
-        # This copies the global commands over to your guild.
-        self.tree.copy_global_to(guild=self.MY_GUILD)
-        await self.tree.sync(guild=self.MY_GUILD)
+    # async def setup_hook(self):
+    #     """This copies the global commands over to each guild.
+    #     Although if you never call .sync() with empty parameters, it's a good way to test your commands
+    #     without having to actually be rate limited for the global command sync."""
+    #     async for guild in self.fetch_guilds():
+    #         self.tree.copy_global_to(guild=guild)
+    #         await self.tree.sync(guild=guild)
+    #     await self.tree.sync()
 
 
 client = MyClient(intents=discord.Intents.all())
@@ -104,8 +109,8 @@ async def notify_users(class_name, course_number, status):
 
 @client.tree.command()
 @app_commands.describe(course_number='Course Number')
-async def get_course_details(interaction: discord.Interaction, course_number: client.course_number_range):
-    """Retreives saved course info from the database."""
+async def get_course_info(interaction: discord.Interaction, course_number: client.course_number_range):
+    """Retreives saved course info (such as the status, professor, and times) from the database."""
     try:
         async with aiosqlite.connect('classes.db') as conn:
             course_row = await access_db.get_course_row(conn, str(course_number))
@@ -174,7 +179,7 @@ async def add_course(interaction: discord.Interaction, course_number: client.cou
 @client.tree.command()
 @app_commands.describe(course_number='Course Number')
 async def remove_course(interaction: discord.Interaction, course_number: client.course_number_range):
-    """Removes a course from being tracked."""
+    """Removes a course from being tracked by you."""
     deleted_rows = 0
     class_name = None
     try:
@@ -195,4 +200,42 @@ async def remove_course(interaction: discord.Interaction, course_number: client.
         await interaction.response.send_message('Did not find that course to remove from your tracked courses.', ephemeral=True)
 
 
-client.run(os.environ.get('DISCORD_TOKEN'))
+@client.tree.command()
+async def fetch_all_tracked_courses(interaction: discord.Interaction):
+    """Returns a list of ALL courses currently being tracked by the bot."""
+    try:
+        async with aiosqlite.connect('classes.db') as conn:
+            courses = await access_db.fetch_all_courses(conn)
+            if courses:
+                message = ''
+                for class_id, _, _ in courses:
+                    class_name, status = await access_db.get_course_name_and_status(conn, class_id)
+                    message += f'{class_name}-{class_id}: {status}\n'
+                await interaction.response.send_message(message)
+            else:
+                await interaction.response.send_message('No courses are currently being tracked.', ephemeral=True)
+    except Exception as e:
+        logger.error(f'An error occured: {e}')
+        await interaction.response.send_message(f'An error occured: {e}', ephemeral=True)     
+
+
+@client.tree.command()
+async def get_my_tracked_courses(interaction: discord.Interaction):
+    """Returns a list of courses YOU have requested to be notified about."""
+    try:
+        async with aiosqlite.connect('classes.db') as conn:
+            class_ids = await access_db.fetch_user_interests(conn, interaction.user.id)
+            if class_ids:
+                message = ''
+                for class_id in class_ids:
+                    class_name, status = await access_db.get_course_name_and_status(conn, class_id)
+                    message += f'{class_name}-{class_id}: {status}\n'
+                await interaction.response.send_message(message)
+            else:
+                await interaction.response.send_message('No courses are currently being tracked.', ephemeral=True)
+    except Exception as e:
+        logger.error(f'An error occured: {e}')
+        await interaction.response.send_message(f'An error occured: {e}', ephemeral=True) 
+    
+
+client.run(os.getenv('DISCORD_TOKEN'))
