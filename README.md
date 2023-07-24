@@ -11,3 +11,6 @@ Since I did not feel comfortable with storing user's credentials, I fell back to
 4) You will then have a URL that will you can use to invite your bot from your browser. You'll have to log into Discord, and you'll also need a server where you are admin.
 5) You'll need to get the GUILD_ID for your server, which you can get by enabling Developer mode on Discord. You'll then be able to right click a server and Copy Server ID.
 6) You should be able to then run the Python file "discord_bot.py" once you set up these variables properly.
+
+### Side Note
+I have included an SSL certificate because the client for Schedule Builder will not work without it. If you don't trust it, you can download it yourself from https://www.digicert.com/kb/digicert-root-certificates.htm. The certificate is DigiCert TLS RSA SHA256 2020 CA1.
