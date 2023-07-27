@@ -230,11 +230,5 @@ async def get_my_tracked_courses(interaction: discord.Interaction):
         await interaction.response.send_message(f'An error occured: {e}', ephemeral=True) 
 
 
-async def main():
-    load_dotenv()
-    await client.start(os.getenv('DISCORD_TOKEN'))
-    await client.wait_until_ready()
-    
-    
-if __name__ == '__main__':
-    asyncio.run(main())
+load_dotenv()
+client.run(os.getenv('DISCORD_TOKEN'))
