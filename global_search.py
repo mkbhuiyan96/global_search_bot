@@ -1,12 +1,13 @@
 import re
 import base64
-import logger_utility
+import random
 import asyncio
 import aiosqlite
 import httpx
 from bs4 import BeautifulSoup
 import create_db
 import access_db
+import logger_utility
 
 logger = logger_utility.setup_logger(__name__, 'global_search.log')
 
@@ -14,9 +15,9 @@ logger = logger_utility.setup_logger(__name__, 'global_search.log')
 class CourseTracker:
     def __init__(self):
         self.all_terms = None
-        self.wait_time = 15
+        self.wait_time = 10
         
-        self.semaphore = asyncio.Semaphore(5)
+        self.semaphore = asyncio.BoundedSemaphore(2)
         self.session = None
         self.session_lock = asyncio.Lock()
         self.session_active = False
@@ -29,7 +30,8 @@ class CourseTracker:
     async def initialize_db(self):
         async with aiosqlite.connect('classes.db') as conn:
             await create_db.initialize_tables(conn)
-            await access_db.create_term_info(conn)
+            await access_db.add_term_info(conn, ('2023 Fall Term', '1239', '3202330'))
+            # This is hard coded for now until I update the code to automatically find this information.
     
     async def create_payload(self, term):
         try:
@@ -45,7 +47,7 @@ class CourseTracker:
                     }
                 raise ValueError(f'No row found in term_info for term {term}')
         except Exception as e:
-            logger.error(f"Database access error: {e}")
+            logger.error(f'An error occured while trying to create payload: {e}')
             exit(1)
     
     async def create_session(self, term):
@@ -59,13 +61,11 @@ class CourseTracker:
                     response = await session.post('https://globalsearch.cuny.edu/CFGlobalSearchTool/CFSearchToolController', data=self.payload)
                     response.raise_for_status()
                     self.session_active = True
-                    self.wait_time = 15
                     return session
                 except Exception as e:
                     self.session_active = False
-                    logger.error(f'An error occured: {e}\nTrying again in {self.wait_time} seconds.')
+                    logger.error(f'An error occured while creating a new session: {e}\nTrying again in {self.wait_time} seconds.')
                     await asyncio.sleep(self.wait_time)
-                    self.wait_time = min(self.wait_time * 2, 300)
     
     async def encode_and_generate_params(self, class_id, term):
         encoded_class_number = base64.b64encode(class_id.encode()).decode()
@@ -87,12 +87,10 @@ class CourseTracker:
                 
                 error_message = soup.find('h1')
                 if error_message and 'Ooops' in error_message.text:
-                    raise ValueError('An error occured: the class does not exist.')
-                
+                    raise ValueError('The class does not exist.')
                 webpage_class_id = soup.find('span', {'id': 'SSR_CLS_DTL_WRK_SSR_DATE_LONG'}).text
                 if class_id != webpage_class_id:
-                    raise ValueError('An error occured: the webpage class number does not match the request.')
-                
+                    raise ValueError('The webpage class number does not match the request.')
                 
                 full_class_name = soup.find('span', {'id': 'DERIVED_CLSRCH_DESCR200'}).text
                 status = soup.find('span', {'id': 'SSR_CLS_DTL_WRK_SSR_DESCRSHORT'}).text
@@ -101,17 +99,17 @@ class CourseTracker:
                 if not full_class_name or not status or not time or not professor:
                     raise ValueError('Failed to find the specified span in the HTML.')
                 class_name = re.search(r'([A-Z]+\s\d+)', full_class_name).group(1)
-                self.wait_time = 15
                 return (class_name, status, time, professor)
             except Exception as e:
-                logger.error(f'An error occured: {e}')
+                logger.error(f'An error occured while trying to scrape for a new entry: {e}')
                 return None
     
     async def add_new_course_to_db(self, session, conn, class_id, term):
         result = await self.scrape_for_new_entry(session, class_id, term)
         if not result:
-            logger.error('Something happened when scraping the webpage. Cannot add course.')
+            logger.error('An error occured while scraping the webpage. Cannot add course.')
             return None
+        
         class_name, status, time, professor = result
         try:
             await access_db.add_course(conn, (class_id, status, term))
@@ -120,7 +118,7 @@ class CourseTracker:
             logger.info(f'{class_name}: {status}. Professor: {professor}. Time: {time}.')
             return result
         except Exception as e:
-            logger.error(f'Database access error: {e}')
+            logger.error(f'An error occured while trying to add a new course to the DB: {e}')
             return None
     
     async def scrape_webpage_status(self, session, params):
@@ -136,17 +134,17 @@ class CourseTracker:
                 if not full_class_name or not class_id or not status:
                     raise ValueError('Failed to find the specified span in the HTML.')
                 class_name = re.search(r'([A-Z]+\s\d+)', full_class_name).group(1)
-                self.wait_time = 15
                 return (class_name, class_id, status)
             except Exception as e:
-                logger.error(f'An error occurred: {e}')
+                logger.error(f'An error occurred while trying to scrape the webpage for the status: {e}')
                 return None
             
     async def sync_status_with_db(self, session, conn, params):
         result = await self.scrape_webpage_status(session, params)
         if not result:
-            logger.error('Something happened when scraping the webpage. Cannot update status.')
+            logger.error('An error occured while scraping the webpage. Cannot sync status with DB.')
             return None
+        
         class_name, class_id, status = result
         try:
             _, stored_status = await access_db.get_course_name_and_status(conn, class_id)
@@ -155,7 +153,7 @@ class CourseTracker:
                 return (class_name, class_id, status, True)
             return (class_name, class_id, status, False)
         except Exception as e:
-            logger.error(f'An error occurred: {e}')
+            logger.error(f'An error occurred while trying to sync the status with the DB: {e}')
             return None
     
     async def start_tracking(self, term):
@@ -171,14 +169,14 @@ class CourseTracker:
                 async with aiosqlite.connect('classes.db') as conn:
                     all_courses = await access_db.fetch_all_courses(conn)
                     if not all_courses:
-                        logger.info('No courses are in the database. Sleeping for 30 seconds.')
-                        await asyncio.sleep(30)
+                        logger.info('No courses are in the database. Sleeping for 10 seconds.')
+                        await asyncio.sleep(10)
                         continue
             except Exception as e:
-                logger.error(f'Database access error: {e}')
+                logger.error(f'An error occured while trying to fetch all courses from the DB: {e}')
                 exit(1)
                 
-            params = [await self.encode_and_generate_params(class_number, year_term) for class_number, status, year_term in all_courses]
+            params = [await self.encode_and_generate_params(class_number, year_term) for class_number, _, year_term in all_courses]
             try:
                 async with aiosqlite.connect('classes.db') as conn:
                     tasks = [self.sync_status_with_db(self.session, conn, param) for param in params]
@@ -191,12 +189,13 @@ class CourseTracker:
                             print(f'{class_name}-{class_id}: {status}')
                         else:
                             print('Error: No results.')
-                    await asyncio.sleep(5)
+                        await asyncio.sleep(round(random.uniform(0.05, 0.2), 2))
+                    await asyncio.sleep(round(random.uniform(2.66, 4.66), 2))
             except Exception as e:
                 logger.error(f'An error occurred: {e}\nTrying to recreate session in {self.wait_time} seconds.')
                 self.session_active = False
                 await self.session.aclose()
-                self.session = await self.create_session()
+                self.session = await self.create_session(term)
 
 
 async def main():

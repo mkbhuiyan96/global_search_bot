@@ -1,12 +1,11 @@
 import time
 import os
-import logger_utility
-import asyncio
-import aiosqlite
 import ssl
+import aiosqlite
 import httpx
 from bs4 import BeautifulSoup
 import access_db
+import logger_utility
 
 logger = logger_utility.setup_logger(__name__, 'schedule_builder.log')
 context = ssl.create_default_context()
@@ -17,9 +16,9 @@ headers = {'User-Agent':
     'Chrome/114.0.0.0 Safari/537.36'
 }
 payload = {
-    'usernameH': f'{os.environ.get("USERNAMEH")}',
-    'username': f'{os.environ.get("USER")}',
-    'password': f'{os.environ.get("PASSWORD")}',
+    'usernameH': f'{os.getenv("USERNAMEH")}',
+    'username': f'{os.getenv("USER")}',
+    'password': f'{os.getenv("PASSWORD")}',
     'submit': ''
 }
 
@@ -30,7 +29,7 @@ async def send_request(action, term, prev_class_id, new_class_id):
             await client.post('https://ssologin.cuny.edu/oam/server/auth_cred_submit', data=payload)
             return await perform_action(client, action, term, prev_class_id, new_class_id)
     except Exception as e:
-        logger.error(f'An error occurred: {e}')
+        logger.error(f'An error occurred while trying to send a request to Schedule Builder: {e}')
         return None
 
 
@@ -55,7 +54,7 @@ async def perform_action(client, action, term, prev_class_id, new_class_id):
             if not term_info:
                 raise ValueError(f'No row found in term_info for term: {term}')
     except Exception as e:
-        logger.error(f'Database error occured: {e}')
+        logger.error(f'An error occured when trying to access the DB: {e}')
         return None
     
     _, hidden_value, term_ID = term_info
@@ -85,12 +84,3 @@ async def perform_action(client, action, term, prev_class_id, new_class_id):
     soup = BeautifulSoup(response.text, 'html.parser')
     message = soup.find('div', {'class': 'actionInfoMessage'}).text
     return message
-
-
-async def main():
-    logger.info(await send_request('drop', '2023 Fall Term', '23427', '23427'))
-    logger.info(await send_request('add', '2023 Fall Term', '23427', '23427'))
-
-
-if __name__ == '__main__':
-    asyncio.run(main())

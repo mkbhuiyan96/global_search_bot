@@ -1,16 +1,15 @@
-import asyncio
-import aiosqlite
+import random
 import os
 from dotenv import load_dotenv
-import signal
-import logger_utility
+import asyncio
+import aiosqlite
 from typing import Literal
 import discord
 from discord import app_commands
 import access_db
 import global_search
+import logger_utility
 
-load_dotenv()
 logger = logger_utility.setup_logger(__name__, 'discord_bot.log')
 
 
@@ -21,12 +20,6 @@ class MyClient(discord.Client):
         self.tracker = global_search.CourseTracker()
         self.course_number_range = app_commands.Range[int, 1000, 99999]
         self.available_terms = Literal['2023 Fall Term']
-        signal.signal(signal.SIGINT, self.signal_handler)
-        signal.signal(signal.SIGTERM, self.signal_handler)
-
-    async def on_ready(self):
-        logger.info(f'Logged in as {self.user} (ID: {self.user.id})')
-        await start_tracking('2023 Fall Term')
 
     # async def setup_hook(self):
     #     """This copies the global commands over to each guild.
@@ -36,13 +29,10 @@ class MyClient(discord.Client):
     #         self.tree.copy_global_to(guild=guild)
     #         await self.tree.sync(guild=guild)
     #     await self.tree.sync()
-    
-    def signal_handler(self, signal, frame):
-        print('Signal received, cleaning up...')
-        if self.tracker.session:
-            self.loop.create_task(self.tracker.session.aclose())
-            print('Sent request to close session.')
-        exit(0)
+        
+    async def on_ready(self):
+        logger.info(f'Logged in as {self.user} (ID: {self.user.id})')
+        await start_tracking('2023 Fall Term')
 
 
 client = MyClient(intents=discord.Intents.all())
@@ -65,7 +55,7 @@ async def start_tracking(term):
                     await asyncio.sleep(10)
                     continue
         except Exception as e:
-            logger.error(f'Error occured while trying to fetch all courses from the db: {e}')
+            logger.error(f'An error occured while trying to fetch all courses from the DB: {e}')
             break
             
         params = [await client.tracker.encode_and_generate_params(class_number, year_term) for class_number, _, year_term in all_courses]
@@ -80,13 +70,14 @@ async def start_tracking(term):
                             await notify_users(class_name, class_id, class_status)
                         print(f'{class_name}-{class_id}: {class_status}')
                     else:
-                        logger.error('An error occured when trying to sync webpage status with db: No results.')
-                await asyncio.sleep(5)
+                        logger.error('An error occured when trying to sync webpage status with DB: No results.')
+                    await asyncio.sleep(round(random.uniform(0.05, 0.2), 2))
+                await asyncio.sleep(round(random.uniform(2.66, 4.66), 2))
         except Exception as e:
             logger.error(f'An error occurred: {e}\nTrying to recreate session in {client.tracker.wait_time} seconds.')
             client.tracker.session_active = False
             await client.tracker.session.aclose()
-            client.tracker.session = await client.tracker.create_session()
+            client.tracker.session = await client.tracker.create_session(term)
     await client.tracker.session.aclose()
 
 async def notify_users(class_name, course_number, status):
@@ -103,16 +94,14 @@ async def notify_users(class_name, course_number, status):
 
 
 @client.tree.command()
-@app_commands.describe(course_number='Course Number')
+@app_commands.describe(course_number='Unique Class Number that can be found on Schedule Builder or Global Search')
 async def get_course_info(interaction: discord.Interaction, course_number: client.course_number_range):
     """Retreives basic information about a course saved on the database."""
     try:
         async with aiosqlite.connect('classes.db') as conn:
-            course_row = await access_db.get_course_row(conn, str(course_number))
-            course_details = await access_db.get_course_details(conn, str(course_number))
-            if course_row and course_details: # Refactor in access_db to use a union
-                _, status, term = course_row
-                class_id, class_name, times, professor = course_details
+            course_tuple = await access_db.get_course_with_details_row(conn, str(course_number))
+            if course_tuple:
+                class_id, status, term, class_name, times, professor = course_tuple
                 await interaction.response.send_message(f'{class_name}-{class_id}: {status}\n{term}\nProfessor: {professor}\nTimes: {times}')
             else:
                 await interaction.response.send_message('That course is not in the database.', ephemeral=True)
@@ -122,29 +111,27 @@ async def get_course_info(interaction: discord.Interaction, course_number: clien
 
 
 @client.tree.command()
-@app_commands.describe(course_number='Class Number from Global Search')
+@app_commands.describe(course_number='Unique Class Number that can be found on Schedule Builder or Global Search')
 async def check_course_status(interaction: discord.Interaction, course_number: client.course_number_range, term: client.available_terms):
-    """Checks CUNY Global Search website for course status."""
+    """Checks CUNY Global Search webpage for real-time course status."""
     try:
         response = await client.tracker.scrape_webpage_status(
             client.tracker.session, params=await client.tracker.encode_and_generate_params(str(course_number), term)
         )
-        if response:
-            class_name, class_id, status = response
-        else:
-            logger.warning(f'Response was empty when trying to check course status.')
-            await interaction.response.send_message(f"Got back nothing when trying to get that course's status.", ephemeral=True)
-            return
+        if not response:
+            raise ValueError(f'Response was empty when trying to check course status.')
+        
+        class_name, class_id, status = response
         if str(course_number) != class_id:
             raise ValueError('Course number did not match when checking the website.')
         await interaction.response.send_message(f'{class_name}-{class_id}: {status}')
     except Exception as e:
-        logger.error(f"An error occured when attempting to check on that course's status: {e}")
+        logger.error(f'An error occured while attempting to check the status of {course_number}: {e}')
         await interaction.response.send_message(f'An error occurred: {e}', ephemeral=True)
 
 
 @client.tree.command()
-@app_commands.describe(course_number='Course Number')
+@app_commands.describe(course_number='Unique Class Number that can be found on Schedule Builder or Global Search')
 async def add_course(interaction: discord.Interaction, course_number: client.course_number_range, term: client.available_terms):
     """Adds a course to be tracked by the bot."""
     database_value = None
@@ -152,33 +139,35 @@ async def add_course(interaction: discord.Interaction, course_number: client.cou
         try:
             database_value = await access_db.get_course_name_and_status(conn, str(course_number))
         except Exception as e:
-            logger.error(f'An error occured when trying acess the db to add a new course: {e}')
+            logger.error(f'An error occured while trying access the DB to add a new course: {e}')
             await interaction.response.send_message(f'An error occurred: {e}', ephemeral=True)
             return
 
-        if not database_value: # This means we have to create a new database entry.        
-            try:
-                response = await client.tracker.add_new_course_to_db(client.tracker.session, conn, str(course_number), term)
-                await access_db.add_user_interest(conn, (interaction.user.id, str(course_number), interaction.channel.id))
-                class_name, status, _, _ = response
-                await interaction.response.send_message(f'{class_name}-{course_number}: {status}')
-            except Exception as e:
-                logger.error(f'An error occured when trying to add a new entry to the db: {e}')
-                await interaction.response.send_message(f'An error occurred: {e}', ephemeral=True)
-                return
-        else:
+        if database_value: 
             try:
                 await access_db.add_user_interest(conn, (interaction.user.id, str(course_number), interaction.channel.id))
                 class_name, status = database_value
                 await interaction.response.send_message(f'{class_name}-{course_number}: {status}')
             except Exception as e:
-                logger.error(f'An error occured: {e}')
+                logger.error(f'An error occured while trying to add a new user interest: {e}')
                 await interaction.response.send_message(f'An error occurred: {e}', ephemeral=True)
-                return
+        else: # This means we have to create a new database entry for the course requested. 
+            try:
+                response = await client.tracker.add_new_course_to_db(client.tracker.session, conn, str(course_number), term)
+                if response:
+                    class_name, status, _, _ = response
+                    await access_db.add_user_interest(conn, (interaction.user.id, str(course_number), interaction.channel.id))
+                    await interaction.response.send_message(f'{class_name}-{course_number}: {status}')
+                else:
+                    logger.error('Got None as response while trying to add a new course to the DB')
+                    await interaction.response.send_message(f'An error occurred: the webpage returned nothing.', ephemeral=True)
+            except Exception as e:
+                logger.error(f'An error occured while trying to add a new entry to the DB: {e}')
+                await interaction.response.send_message(f'An error occurred: {e}', ephemeral=True)
 
 
 @client.tree.command()
-@app_commands.describe(course_number='Course Number')
+@app_commands.describe(course_number='Unique Class Number that can be found on Schedule Builder or Global Search')
 async def remove_course(interaction: discord.Interaction, course_number: client.course_number_range):
     """Removes a course from being tracked by you."""
     deleted_rows = 0
@@ -187,13 +176,15 @@ async def remove_course(interaction: discord.Interaction, course_number: client.
         async with aiosqlite.connect('classes.db') as conn:
             class_name, _ = await access_db.get_course_name_and_status(conn, course_number)
             deleted_rows = await access_db.remove_user_interest(conn, interaction.user.id, str(course_number))
+            if deleted_rows is None:
+                raise ValueError('Got None instead of an integer for deleted rows.')
     except Exception as e:
-        logger.error(f'An error occured when accessing the db to remove a course: {e}')
+        logger.error(f'An error occured while accessing the DB to remove a course: {e}')
         await interaction.response.send_message(f'An error occured: {e}', ephemeral=True)
         return
     if deleted_rows < 0:
         await interaction.response.send_message(f'Removed {class_name}-{course_number} from your tracked courses.\n'
-            'No one else was tracking this course, so the course was removed from the database.'
+            'No one else was tracking this course, so it was removed from the database.'
         )
     elif deleted_rows > 0:
         await interaction.response.send_message(f'Removed {class_name}-{course_number} from your tracked courses.')
@@ -216,7 +207,7 @@ async def fetch_all_tracked_courses(interaction: discord.Interaction):
             else:
                 await interaction.response.send_message('No courses are currently being tracked.', ephemeral=True)
     except Exception as e:
-        logger.error(f'An error occured when trying to retrieve all courses in the db: {e}')
+        logger.error(f'An error occured while trying to retrieve all courses in the DB: {e}')
         await interaction.response.send_message(f'An error occured: {e}', ephemeral=True)     
 
 
@@ -235,8 +226,15 @@ async def get_my_tracked_courses(interaction: discord.Interaction):
             else:
                 await interaction.response.send_message('No courses are currently being tracked.', ephemeral=True)
     except Exception as e:
-        logger.error(f"An error occured when trying to access {interaction.user.name}'s tracke courses: {e}")
+        logger.error(f"An error occured while trying to access {interaction.user.name}'s tracked courses: {e}")
         await interaction.response.send_message(f'An error occured: {e}', ephemeral=True) 
-    
 
-client.run(os.getenv('DISCORD_TOKEN'))
+
+async def main():
+    load_dotenv()
+    await client.start(os.getenv('DISCORD_TOKEN'))
+    await client.wait_until_ready()
+    
+    
+if __name__ == '__main__':
+    asyncio.run(main())
