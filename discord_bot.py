@@ -35,7 +35,7 @@ class MyClient(discord.Client):
         await start_tracking('2023 Fall Term')
 
 
-client = MyClient(intents=discord.Intents.all())
+client = MyClient(intents=discord.Intents.default())
 
 
 async def start_tracking(term):
@@ -85,10 +85,14 @@ async def notify_users(class_name, course_number, status):
         async with aiosqlite.connect('classes.db') as conn:
             user_channel_tuples = await access_db.fetch_all_users_and_channels_for_course(conn, course_number)
             for user_id, channel_id in user_channel_tuples:
-                user = client.get_user(int(user_id))
-                channel = client.get_channel(int(channel_id))
+                user = client.get_user(int(user_id)) or await client.fetch_user(int(user_id))
+                channel = client.get_channel(int(channel_id)) or await client.fetch_channel(int(channel_id))
                 if user and channel:
+                    print(f'Notified {user} in {channel} about {class_name}-{course_number} being {status}.')
                     await channel.send(f'{user.mention}, {class_name}-{course_number} is now {status}!')
+                else:
+                    logger.warning(f'Error: Unable to send notification for {class_name}. User was {user} and Channel was {channel}.')
+                    
     except Exception as e:
         logger.error(f'An error occured when trying to notify users about a status change: {e}')
 
