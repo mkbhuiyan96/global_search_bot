@@ -30,7 +30,8 @@ class CourseTracker:
     async def initialize_db(self):
         async with aiosqlite.connect('classes.db') as conn:
             await create_db.initialize_tables(conn)
-            await access_db.add_term_info(conn, ('2023 Fall Term', '1239', '3202330'))
+            await access_db.add_term_info(conn, ('2024 Spring Term', '1242', '3202330'))
+            await access_db.add_term_info(conn, ('2024 Summer Term', '1246', '3202420'))
             # This is hard coded for now until I update the code to automatically find this information.
     
     async def create_payload(self, term):
@@ -83,22 +84,20 @@ class CourseTracker:
             try:
                 response = await session.get('https://globalsearch.cuny.edu/CFGlobalSearchTool/CFSearchToolController', params=params)
                 response.raise_for_status()
-                soup = BeautifulSoup(response.text, 'html.parser')
+                soup = BeautifulSoup(response.text, 'lxml')
                 
                 error_message = soup.find('h1')
-                if error_message and 'Ooops' in error_message.text:
+                if error_message and 'Oops' in error_message.text:
                     raise ValueError('The class does not exist.')
-                webpage_class_id = soup.find('span', {'id': 'SSR_CLS_DTL_WRK_SSR_DATE_LONG'}).text
+                webpage_class_id = soup.find('td', string=re.compile('\d+')).get_text(strip=True)
                 if class_id != webpage_class_id:
                     raise ValueError('The webpage class number does not match the request.')
                 
-                full_class_name = soup.find('span', {'id': 'DERIVED_CLSRCH_DESCR200'}).text
-                status = soup.find('span', {'id': 'SSR_CLS_DTL_WRK_SSR_DESCRSHORT'}).text
-                time = soup.find('span', {'id': 'MTG_SCHED$0'}).text
-                professor = soup.find('span', {'id': 'MTG_INSTR$0'}).text
-                if not full_class_name or not status or not time or not professor:
-                    raise ValueError('Failed to find the specified span in the HTML.')
-                class_name = re.search(r'([A-Z]+\s\d+)', full_class_name).group(1)
+                full_class_name = soup.find('div', {'class': 'shadowbox'}).find('p').get_text(strip=True)
+                class_name = re.search(r'\b[A-Z]+\s\d+', full_class_name).group()
+                status = soup.find('img', alt=['Open', 'Close'])['alt']
+                time = soup.find('td', {'data-label': 'Days And Times'}).get_text(strip=True)
+                professor = soup.find('td', {'data-label': 'Instructor'}).get_text(strip=True)
                 return (class_name, status, time, professor)
             except Exception as e:
                 logger.error(f'An error occured while trying to scrape for a new entry: {e}')
@@ -126,14 +125,14 @@ class CourseTracker:
             try:
                 response = await session.get('https://globalsearch.cuny.edu/CFGlobalSearchTool/CFSearchToolController', params=params)
                 response.raise_for_status()
-                soup = BeautifulSoup(response.text, 'html.parser')
+                soup = BeautifulSoup(response.text, 'lxml')
                 
-                full_class_name = soup.find('span', {'id': 'DERIVED_CLSRCH_DESCR200'}).text
-                class_id = soup.find('span', {'id': 'SSR_CLS_DTL_WRK_SSR_DATE_LONG'}).text
-                status = soup.find('span', {'id': 'SSR_CLS_DTL_WRK_SSR_DESCRSHORT'}).text
+                full_class_name = soup.find('div', {'class': 'shadowbox'}).find('p').get_text(strip=True)
+                class_id = soup.find('td', string=re.compile('\d+')).get_text(strip=True)
+                status = soup.find('img', alt=['Open', 'Close'])['alt']
                 if not full_class_name or not class_id or not status:
                     raise ValueError('Failed to find the specified span in the HTML.')
-                class_name = re.search(r'([A-Z]+\s\d+)', full_class_name).group(1)
+                class_name = re.search(r'\b[A-Z]+\s\d+', full_class_name).group()
                 return (class_name, class_id, status)
             except Exception as e:
                 logger.error(f'An error occurred while trying to scrape the webpage for the status: {e}')
